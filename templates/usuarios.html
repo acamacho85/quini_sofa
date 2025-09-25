@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Usuarios{% endblock %}
+{% block content %}
+<h2>Gestión de Usuarios</h2>
+<form method="POST">
+    <div class="mb-3">
+        <input type="text" name="nombre" placeholder="Nombre del usuario" class="form-control" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Agregar Usuario</button>
+</form>
+
+<h3 class="mt-4">Usuarios registrados</h3>
+<ul>
+    {% for u in usuarios %}
+    <li>{{ u }}</li>
+    {% endfor %}
+</ul>
+{% endblock %}
