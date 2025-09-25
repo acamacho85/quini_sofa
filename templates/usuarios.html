@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Usuarios{% endblock %}
+
 {% block content %}
-<h2>Gestión de Usuarios</h2>
-<form method="POST">
+<h1>Gestión de Usuarios</h1>
+<form method="POST" action="{{ url_for('gestion_usuarios') }}">
     <div class="mb-3">
-        <input type="text" name="nombre" placeholder="Nombre del usuario" class="form-control" required>
+        <label for="nombre" class="form-label">Nombre del Usuario</label>
+        <input type="text" class="form-control" id="nombre" name="nombre" required>
     </div>
-    <button type="submit" class="btn btn-primary">Agregar Usuario</button>
+    <button type="submit" class="btn btn-primary">Agregar / Modificar</button>
 </form>
 
-<h3 class="mt-4">Usuarios registrados</h3>
-<ul>
+<hr>
+
+<h2>Lista de Usuarios</h2>
+<ul class="list-group">
     {% for u in usuarios %}
-    <li>{{ u }}</li>
+    <li class="list-group-item">{{ u.nombre }}</li>
     {% endfor %}
 </ul>
 {% endblock %}
