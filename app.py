@@ -5,8 +5,12 @@ from datetime import datetime
 from equipos_dict import EQUIPOS
 
 JSON_FILE = "liga_mx_apertura_2025.json"
+USUARIOS_FILE = "usuarios.json"
+PRONOSTICOS_FILE = "pronosticos.json"
 
 app = Flask(__name__)
+
+# ---------------- FUNCIONES AUXILIARES ----------------
 
 def formatear_evento(evento):
     ts = evento.get("startTimestamp")
@@ -41,6 +45,19 @@ def obtener_jornada_activa(rounds):
                 return round_number
     return list(rounds.keys())[-1]
 
+def cargar_usuarios():
+    """Carga usuarios como lista de dicts con 'nombre'"""
+    if os.path.exists(USUARIOS_FILE):
+        with open(USUARIOS_FILE, "r", encoding="utf-8") as f:
+            usuarios = json.load(f)
+    else:
+        usuarios = []
+    return usuarios
+
+def guardar_usuarios(usuarios):
+    with open(USUARIOS_FILE, "w", encoding="utf-8") as f:
+        json.dump(usuarios, f, indent=2)
+
 # ---------------- RUTAS PRINCIPALES ----------------
 
 @app.route("/")
@@ -63,42 +80,43 @@ def mostrar_calendario():
 
 # ---------------- USUARIOS ----------------
 
-USUARIOS_FILE = "usuarios.json"
-
 @app.route("/usuarios", methods=["GET", "POST"])
 def gestion_usuarios():
-    if os.path.exists(USUARIOS_FILE):
-        with open(USUARIOS_FILE, "r", encoding="utf-8") as f:
-            usuarios = json.load(f)
-    else:
-        usuarios = []
+    usuarios = cargar_usuarios()
 
     if request.method == "POST":
         nuevo_usuario = request.form.get("nombre")
-        if nuevo_usuario and nuevo_usuario not in usuarios:
-            usuarios.append(nuevo_usuario)
-            with open(USUARIOS_FILE, "w", encoding="utf-8") as f:
-                json.dump(usuarios, f, indent=2)
+        if nuevo_usuario and not any(u['nombre'] == nuevo_usuario for u in usuarios):
+            usuarios.append({"nombre": nuevo_usuario})
+            guardar_usuarios(usuarios)
         return redirect(url_for("gestion_usuarios"))
 
     return render_template("usuarios.html", usuarios=usuarios)
 
 # ---------------- CAPTURA DE PRONOSTICOS ----------------
 
-PRONOSTICOS_FILE = "pronosticos.json"
-
+@app.route("/captura_pronosticos/", defaults={"jornada": None}, methods=["GET", "POST"])
 @app.route("/captura_pronosticos/<jornada>", methods=["GET", "POST"])
 def captura_pronosticos_jornada(jornada):
     rounds = cargar_datos()
+    rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
+    rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
+    jornada_activa = obtener_jornada_activa(rounds_sorted)
+
+    if jornada is None:
+        jornada = jornada_activa
+
     round_data = rounds.get(jornada, {})
     eventos = round_data.get("events", [])
+
+    usuarios = cargar_usuarios()
 
     if request.method == "POST":
         pronosticos = {}
         for e in eventos:
-            key = f"{e['id']}"
-            pronosticos[key] = request.form.get(key)
-        # Guardar pronósticos
+            for u in usuarios:
+                key = f"{e['id']}_{u['nombre']}"
+                pronosticos[key] = request.form.get(key)
         if os.path.exists(PRONOSTICOS_FILE):
             with open(PRONOSTICOS_FILE, "r", encoding="utf-8") as f:
                 all_pronosticos = json.load(f)
@@ -113,6 +131,8 @@ def captura_pronosticos_jornada(jornada):
         "captura_pronosticos.html",
         jornada=jornada,
         eventos=eventos,
+        rounds=rounds_sorted,
+        usuarios=usuarios,
         team_logo_map=EQUIPOS
     )
 
@@ -123,6 +143,8 @@ def evaluar_pronosticos_jornada(jornada):
     rounds = cargar_datos()
     round_data = rounds.get(jornada, {})
     eventos = round_data.get("events", [])
+    rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
+    rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
 
     if os.path.exists(PRONOSTICOS_FILE):
         with open(PRONOSTICOS_FILE, "r", encoding="utf-8") as f:
@@ -151,6 +173,21 @@ def evaluar_pronosticos_jornada(jornada):
         resultados=resultados,
         team_logo_map=EQUIPOS
     )
+
+# ---------------- CONTEXT PROCESSOR ----------------
+
+@app.context_processor
+def inject_jornada_activa():
+    try:
+        rounds = cargar_datos()
+        rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
+        if not rounds_filtered:
+            return dict(jornada_activa=None)
+        rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
+        jornada_activa = obtener_jornada_activa(rounds_sorted)
+        return dict(jornada_activa=jornada_activa)
+    except Exception:
+        return dict(jornada_activa=None)
 
 # ---------------- FILTROS JINJA ----------------
 

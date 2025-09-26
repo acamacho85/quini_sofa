@@ -1,22 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Usuarios{% endblock %}
+{% block title %}Gestión de Usuarios{% endblock %}
 
 {% block content %}
-<h1>Gestión de Usuarios</h1>
-<form method="POST" action="{{ url_for('gestion_usuarios') }}">
-    <div class="mb-3">
-        <label for="nombre" class="form-label">Nombre del Usuario</label>
-        <input type="text" class="form-control" id="nombre" name="nombre" required>
+<div class="row">
+    <div class="col-md-6">
+        <h1>Gestión de Usuarios</h1>
+        <form method="POST" action="{{ url_for('gestion_usuarios') }}">
+            <div class="mb-3">
+                <label for="nombre" class="form-label">Nombre del Usuario</label>
+                <input type="text" class="form-control" id="nombre" name="nombre" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar / Modificar</button>
+        </form>
     </div>
-    <button type="submit" class="btn btn-primary">Agregar / Modificar</button>
-</form>
-
-<hr>
-
-<h2>Lista de Usuarios</h2>
-<ul class="list-group">
-    {% for u in usuarios %}
-    <li class="list-group-item">{{ u.nombre }}</li>
-    {% endfor %}
-</ul>
+    <div class="col-md-6">
+        <h2>Lista de Usuarios</h2>
+        {% if usuarios %}
+        <ul class="list-group">
+            {% for u in usuarios %}
+            <li class="list-group-item">{{ u.nombre }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p>No hay usuarios registrados.</p>
+        {% endif %}
+    </div>
+</div>
 {% endblock %}
