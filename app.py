@@ -1,201 +1,156 @@
 from flask import Flask, render_template, request, redirect, url_for
-import json
-import os
+import sqlite3
 from datetime import datetime
 from equipos_dict import EQUIPOS
 
-JSON_FILE = "liga_mx_apertura_2025.json"
-USUARIOS_FILE = "usuarios.json"
-PRONOSTICOS_FILE = "pronosticos.json"
-
 app = Flask(__name__)
 
-# ---------------- FUNCIONES AUXILIARES ----------------
+def obtener_jornadas():
+    conn = sqlite3.connect("liga_mx.db")
+    cursor = conn.cursor()
 
-def formatear_evento(evento):
-    ts = evento.get("startTimestamp")
-    if ts:
-        dt = datetime.fromtimestamp(int(ts))
-        evento["fecha_str"] = dt.strftime("%Y-%m-%d")
-        evento["hora_str"] = dt.strftime("%H:%M")
-    else:
-        evento["fecha_str"] = "N/A"
-        evento["hora_str"] = "N/A"
-    return evento
+    cursor.execute("SELECT * FROM partidos ORDER BY jornada, start_timestamp")
+    partidos_raw = cursor.fetchall()
 
-def cargar_datos():
-    """Carga el JSON más reciente disponible"""
-    file_path = "all_rounds_updated.json" if os.path.exists("all_rounds_updated.json") else JSON_FILE
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data
+    jornadas = {}
+    for p in partidos_raw:
+        partido = {
+            "id": p[0],
+            "slug": p[1],
+            "start_timestamp": p[2],
+            "status_code": p[3],
+            "status_desc": p[4],
+            "equipo_local": p[5],
+            "equipo_local_id": p[6],
+            "equipo_visitante": p[7],
+            "equipo_visitante_id": p[8],
+            "goles_local": p[9],
+            "goles_visitante": p[10],
+            "ganador": p[11],
+            "jornada": p[12],
+            "fecha_str": datetime.fromtimestamp(p[2]).strftime("%d/%m/%Y"),
+            "hora_str": datetime.fromtimestamp(p[2]).strftime("%H:%M")
+        }
 
-def obtener_jornada_activa(rounds):
-    """Devuelve el número de la jornada en curso o la próxima por jugar"""
-    ahora = datetime.now().timestamp()
-    for round_number, round_data in sorted(rounds.items(), key=lambda x: int(x[0])):
-        eventos = round_data.get("events", [])
-        if not eventos:
-            continue
-        for e in eventos:
-            start_ts = e.get("startTimestamp")
-            if start_ts and int(start_ts) >= ahora:
-                return round_number
-            if start_ts and int(start_ts) <= ahora and not e.get("status", {}).get("type") == "finished":
-                return round_number
-    return list(rounds.keys())[-1]
+        jornadas.setdefault(p[12], []).append(partido)
 
-def cargar_usuarios():
-    """Carga usuarios como lista de dicts con 'nombre'"""
-    if os.path.exists(USUARIOS_FILE):
-        with open(USUARIOS_FILE, "r", encoding="utf-8") as f:
-            usuarios = json.load(f)
-    else:
-        usuarios = []
-    return usuarios
+    conn.close()
 
-def guardar_usuarios(usuarios):
-    with open(USUARIOS_FILE, "w", encoding="utf-8") as f:
-        json.dump(usuarios, f, indent=2)
+    # Convertir a lista de objetos jornada
+    jornadas_list = [{"numero": j, "partidos": jornadas[j]} for j in sorted(jornadas.keys())]
+    return jornadas_list
 
-# ---------------- RUTAS PRINCIPALES ----------------
+def detectar_jornada_activa(jornadas):
+    now = int(datetime.now().timestamp())
+    for jornada in jornadas:
+        partidos = jornada["partidos"]
+        if any(p["start_timestamp"] > now and p["status_code"] != 100 for p in partidos):
+            return str(jornada["numero"])
+    return str(jornadas[-1]["numero"])  # última si todas terminaron
 
 @app.route("/")
+@app.route("/calendario")
 def mostrar_calendario():
-    rounds = cargar_datos()
-    rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
-    rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
-    jornada_activa = obtener_jornada_activa(rounds_sorted)
-    # Formatear fecha/hora para cada evento
-    for ronda in rounds_sorted.values():
-        eventos = ronda.get("events", [])
-        for i, e in enumerate(eventos):
-            ronda["events"][i] = formatear_evento(e)
-    return render_template(
-        "calendario.html",
-        rounds=rounds_sorted,
-        team_logo_map=EQUIPOS,
-        jornada_activa=jornada_activa
-    )
+    jornadas = obtener_jornadas()
+    jornada_activa = detectar_jornada_activa(jornadas)
 
-# ---------------- USUARIOS ----------------
+    return render_template("calendario.html",
+                           jornadas=jornadas,
+                           jornada_activa=jornada_activa,
+                           team_logo_map=EQUIPOS)
 
 @app.route("/usuarios", methods=["GET", "POST"])
 def gestion_usuarios():
-    usuarios = cargar_usuarios()
+    conn = sqlite3.connect("liga_mx.db")
+    cursor = conn.cursor()
 
     if request.method == "POST":
-        nuevo_usuario = request.form.get("nombre")
-        if nuevo_usuario and not any(u['nombre'] == nuevo_usuario for u in usuarios):
-            usuarios.append({"nombre": nuevo_usuario})
-            guardar_usuarios(usuarios)
-        return redirect(url_for("gestion_usuarios"))
+        nombre = request.form.get("nombre", "").strip()
+        if nombre:
+            cursor.execute("INSERT OR IGNORE INTO usuarios (nombre) VALUES (?)", (nombre,))
+            conn.commit()
+            return redirect(url_for("gestion_usuarios"))
+
+    cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre")
+    usuarios = [{"id": row[0], "nombre": row[1]} for row in cursor.fetchall()]
+    conn.close()
 
     return render_template("usuarios.html", usuarios=usuarios)
 
-# ---------------- CAPTURA DE PRONOSTICOS ----------------
-
-@app.route("/captura_pronosticos/", defaults={"jornada": None}, methods=["GET", "POST"])
-@app.route("/captura_pronosticos/<jornada>", methods=["GET", "POST"])
+@app.route("/pronosticos/<int:jornada>", methods=["GET", "POST"])
 def captura_pronosticos_jornada(jornada):
-    rounds = cargar_datos()
-    rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
-    rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
-    jornada_activa = obtener_jornada_activa(rounds_sorted)
+    conn = sqlite3.connect("liga_mx.db")
+    cursor = conn.cursor()
 
-    if jornada is None:
-        jornada = jornada_activa
+    # Obtener usuarios
+    cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre")
+    usuarios = [{"id": row[0], "nombre": row[1]} for row in cursor.fetchall()]
 
-    round_data = rounds.get(jornada, {})
-    eventos = round_data.get("events", [])
-
-    usuarios = cargar_usuarios()
+    # Obtener partidos de la jornada
+    cursor.execute("""
+        SELECT id, equipo_local_nombre, equipo_visitante_nombre
+        FROM partidos
+        WHERE jornada = ?
+        ORDER BY start_timestamp
+    """, (jornada,))
+    eventos = [{"id": row[0], "homeTeam": {"name": row[1]}, "awayTeam": {"name": row[2]}} for row in cursor.fetchall()]
 
     if request.method == "POST":
-        pronosticos = {}
-        for e in eventos:
-            for u in usuarios:
-                key = f"{e['id']}_{u['nombre']}"
-                pronosticos[key] = request.form.get(key)
-        if os.path.exists(PRONOSTICOS_FILE):
-            with open(PRONOSTICOS_FILE, "r", encoding="utf-8") as f:
-                all_pronosticos = json.load(f)
-        else:
-            all_pronosticos = {}
-        all_pronosticos[jornada] = pronosticos
-        with open(PRONOSTICOS_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_pronosticos, f, indent=2)
-        return redirect(url_for("captura_pronosticos_jornada", jornada=jornada))
+        usuario_id = request.form.get("usuario")
+        jornada_form = int(request.form.get("jornada"))
 
-    return render_template(
-        "captura_pronosticos.html",
-        jornada=jornada,
-        eventos=eventos,
-        rounds=rounds_sorted,
-        usuarios=usuarios,
-        team_logo_map=EQUIPOS
-    )
+        for event in eventos:
+            partido_id = event["id"]
+            pronostico_str = request.form.get(f"pronostico_{partido_id}")
+            pronostico_map = {"local": 1, "empate": 2, "visitante": 3}
+            pronostico = pronostico_map.get(pronostico_str)
 
-# ---------------- EVALUACION DE PRONOSTICOS ----------------
+            if pronostico:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pronosticos (usuario_id, partido_id, pronostico)
+                    VALUES (?, ?, ?)
+                """, (usuario_id, partido_id, pronostico))
 
-@app.route("/evaluar_pronosticos/<jornada>")
+        conn.commit()
+        conn.close()
+        return redirect(url_for("mostrar_calendario"))
+
+    conn.close()
+    return render_template("captura_pronosticos.html",
+                           jornada_activa=jornada,
+                           usuarios=usuarios,
+                           rounds={jornada: eventos},
+                           eventos=eventos)
+
+@app.route("/evaluar/<int:jornada>")
 def evaluar_pronosticos_jornada(jornada):
-    rounds = cargar_datos()
-    round_data = rounds.get(jornada, {})
-    eventos = round_data.get("events", [])
-    rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
-    rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
+    conn = sqlite3.connect("liga_mx.db")
+    cursor = conn.cursor()
 
-    if os.path.exists(PRONOSTICOS_FILE):
-        with open(PRONOSTICOS_FILE, "r", encoding="utf-8") as f:
-            all_pronosticos = json.load(f)
-        pronosticos = all_pronosticos.get(jornada, {})
-    else:
-        pronosticos = {}
+    # Obtener pronósticos con resultados
+    cursor.execute("""
+        SELECT u.id, u.nombre, p.jornada, pa.equipo_local_nombre, pa.equipo_visitante_nombre,
+               p.pronostico, pa.ganador
+        FROM pronosticos p
+        JOIN usuarios u ON p.usuario_id = u.id
+        JOIN partidos pa ON p.partido_id = pa.id
+        WHERE pa.jornada = ? AND pa.ganador IS NOT NULL
+        ORDER BY u.nombre, pa.start_timestamp
+    """, (jornada,))
 
-    # Determinar resultado real usando winnerCode: 1=Local, 2=Empate, 3=Visitante
-    resultados = {}
-    for e in eventos:
-        wc = e.get("winnerCode")
-        if wc == 1:
-            resultado = "local"
-        elif wc == 2:
-            resultado = "visitante"
-        else:
-            resultado = "empate"
-        resultados[e["id"]] = resultado
+    pronosticos = []
+    for row in cursor.fetchall():
+        pronosticos.append({
+            "usuario": {"id": row[0], "nombre": row[1]},
+            "jornada": row[2],
+            "local": row[3],
+            "visitante": row[4],
+            "pronostico": row[5],
+            "resultado": row[6]
+        })
 
-    return render_template(
-        "evaluar_pronosticos.html",
-        jornada=jornada,
-        eventos=eventos,
-        pronosticos=pronosticos,
-        resultados=resultados,
-        team_logo_map=EQUIPOS
-    )
-
-# ---------------- CONTEXT PROCESSOR ----------------
-
-@app.context_processor
-def inject_jornada_activa():
-    try:
-        rounds = cargar_datos()
-        rounds_filtered = {k: v for k, v in rounds.items() if v.get('events')}
-        if not rounds_filtered:
-            return dict(jornada_activa=None)
-        rounds_sorted = dict(sorted(rounds_filtered.items(), key=lambda x: int(x[0])))
-        jornada_activa = obtener_jornada_activa(rounds_sorted)
-        return dict(jornada_activa=jornada_activa)
-    except Exception:
-        return dict(jornada_activa=None)
-
-# ---------------- FILTROS JINJA ----------------
-
-@app.template_filter('timestamp_to_datetime')
-def timestamp_to_datetime_filter(ts):
-    if ts:
-        return datetime.fromtimestamp(int(ts)).strftime('%Y-%m-%d %H:%M')
-    return "N/A"
+    conn.close()
+    return render_template("evaluar_pronosticos.html", pronosticos=pronosticos, jornada_activa=jornada)
 
 # ---------------- MAIN ----------------
 

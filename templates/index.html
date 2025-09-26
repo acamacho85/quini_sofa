@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Partidos Liga MX Apertura 2025</title>
+</head>
+<body>
+    <h1>Jornada por Jornada</h1>
+    <table border="1">
+        <tr>
+            <th>Jornada</th>
+            <th>Fecha</th>
+            <th>Local</th>
+            <th>Goles</th>
+            <th>Visitante</th>
+            <th>Goles</th>
+        </tr>
+        {% for p in partidos %}
+        <tr>
+            <td>{{ p[12] }}</td>
+            <td>{{ p[2] }}</td>
+            <td>{{ p[5] }}</td>
+            <td>{{ p[9] }}</td>
+            <td>{{ p[7] }}</td>
+            <td>{{ p[10] }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
