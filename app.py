@@ -36,7 +36,6 @@ def obtener_jornadas():
 
     conn.close()
 
-    # Convertir a lista de objetos jornada
     jornadas_list = [{"numero": j, "partidos": jornadas[j]} for j in sorted(jornadas.keys())]
     return jornadas_list
 
@@ -52,11 +51,8 @@ def detectar_jornada_activa(jornadas):
 @app.route("/calendario")
 def mostrar_calendario():
     jornadas = obtener_jornadas()
-    jornada_activa = detectar_jornada_activa(jornadas)
-
     return render_template("calendario.html",
                            jornadas=jornadas,
-                           jornada_activa=jornada_activa,
                            team_logo_map=EQUIPOS)
 
 @app.route("/usuarios", methods=["GET", "POST"])
@@ -95,46 +91,74 @@ def captura_pronosticos_jornada(jornada):
     """, (jornada,))
     eventos = [{"id": row[0], "homeTeam": {"name": row[1]}, "awayTeam": {"name": row[2]}} for row in cursor.fetchall()]
 
+    # ---------------------------
+    # Detectar usuario seleccionado
+    # ---------------------------
+    usuario_id = None
     if request.method == "POST":
-        usuario_id = request.form.get("usuario")
-        jornada_form = int(request.form.get("jornada"))
+        usuario_str = request.form.get("usuario", "")
+        if usuario_str.isdigit():
+            usuario_id = int(usuario_str)
+    else:
+        usuario_str = request.args.get("usuario", "")
+        if usuario_str.isdigit():
+            usuario_id = int(usuario_str)
 
+    # ---------------------------
+    # Cargar pronósticos existentes
+    # ---------------------------
+    pronosticos_existentes = {}
+    if usuario_id:
+        cursor.execute("""
+            SELECT partido_id, pronostico
+            FROM pronosticos
+            WHERE usuario_id = ? AND partido_id IN (
+                SELECT id FROM partidos WHERE jornada = ?
+            )
+        """, (usuario_id, jornada))
+        pronosticos_existentes = {row[0]: row[1] for row in cursor.fetchall()}
+
+    # ---------------------------
+    # Manejo POST
+    # ---------------------------
+    if request.method == "POST":
+        jornada_form = int(request.form.get("jornada", jornada))
         for event in eventos:
             partido_id = event["id"]
             pronostico_str = request.form.get(f"pronostico_{partido_id}")
             pronostico_map = {"local": 1, "empate": 2, "visitante": 3}
             pronostico = pronostico_map.get(pronostico_str)
-
-            if pronostico:
+            if pronostico and usuario_id:
                 cursor.execute("""
                     INSERT OR REPLACE INTO pronosticos (usuario_id, partido_id, pronostico)
                     VALUES (?, ?, ?)
                 """, (usuario_id, partido_id, pronostico))
-
         conn.commit()
-        conn.close()
-        return redirect(url_for("mostrar_calendario"))
+        return redirect(url_for("captura_pronosticos_jornada", jornada=jornada, usuario=usuario_id))
 
     conn.close()
-    return render_template("captura_pronosticos.html",
-                           jornada_activa=jornada,
-                           usuarios=usuarios,
-                           rounds={jornada: eventos},
-                           eventos=eventos)
+    return render_template(
+        "captura_pronosticos.html",
+        usuarios=usuarios,
+        rounds={jornada: eventos},
+        eventos=eventos,
+        pronosticos_existentes=pronosticos_existentes,
+        usuario_seleccionado=usuario_id,
+        team_logo_map=EQUIPOS
+    )
 
 @app.route("/evaluar/<int:jornada>")
 def evaluar_pronosticos_jornada(jornada):
     conn = sqlite3.connect("liga_mx.db")
     cursor = conn.cursor()
 
-    # Obtener pronósticos con resultados
     cursor.execute("""
-        SELECT u.id, u.nombre, p.jornada, pa.equipo_local_nombre, pa.equipo_visitante_nombre,
+        SELECT u.id, u.nombre, pa.jornada, pa.equipo_local_nombre, pa.equipo_visitante_nombre,
                p.pronostico, pa.ganador
         FROM pronosticos p
         JOIN usuarios u ON p.usuario_id = u.id
         JOIN partidos pa ON p.partido_id = pa.id
-        WHERE pa.jornada = ? AND pa.ganador IS NOT NULL
+        WHERE pa.jornada = ?
         ORDER BY u.nombre, pa.start_timestamp
     """, (jornada,))
 
@@ -150,9 +174,18 @@ def evaluar_pronosticos_jornada(jornada):
         })
 
     conn.close()
-    return render_template("evaluar_pronosticos.html", pronosticos=pronosticos, jornada_activa=jornada)
+    return render_template("evaluar_pronosticos.html", pronosticos=pronosticos)
+
+@app.context_processor
+def inject_jornada_activa():
+    try:
+        jornadas = obtener_jornadas()
+        jornada_activa = detectar_jornada_activa(jornadas) if jornadas else None
+    except Exception:
+        jornada_activa = None
+    return dict(jornada_activa=jornada_activa)
+
 
 # ---------------- MAIN ----------------
-
 if __name__ == "__main__":
     app.run(debug=True)

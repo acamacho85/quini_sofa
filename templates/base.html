@@ -25,23 +25,22 @@
                         <a class="nav-link" href="{{ url_for('gestion_usuarios') }}">Usuarios</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link"
-                           href="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa|default('')) }}">
-                            Captura Pronósticos
-                        </a>
+                        {% if jornada_activa %}
+                            <a class="nav-link" href="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}">
+                                Captura Pronósticos
+                            </a>
+                        {% else %}
+                            <a class="nav-link disabled" href="#">Captura Pronósticos</a>
+                        {% endif %}
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link"
-                           {% if jornada_activa %}
-                          <a class="nav-link" href="{{ url_for('evaluar_pronosticos_jornada', jornada=jornada_activa) }}">
-                              Evaluar Pronósticos
-                          </a>
-                          {% else %}
-                          <a class="nav-link disabled" href="#">Evaluar Pronósticos</a>
-                          {% endif %}
-
-
-                        </a>
+                        {% if jornada_activa %}
+                            <a class="nav-link" href="{{ url_for('evaluar_pronosticos_jornada', jornada=jornada_activa) }}">
+                                Evaluar Pronósticos
+                            </a>
+                        {% else %}
+                            <a class="nav-link disabled" href="#">Evaluar Pronósticos</a>
+                        {% endif %}
                     </li>
                 </ul>
             </div>

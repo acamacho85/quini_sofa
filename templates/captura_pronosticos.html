@@ -3,12 +3,12 @@
 
 {% block content %}
 <h1>Captura de Pronósticos</h1>
-<form method="POST" action="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}">
+<form method="POST" action="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}" onsubmit="return confirmarSobrescritura()">
     <div class="mb-3">
         <label for="usuario" class="form-label">Usuario</label>
-        <select class="form-select" id="usuario" name="usuario" required>
+        <select class="form-select" id="usuario" name="usuario" required onchange="cambiarUsuario(this.value)">
             {% for u in usuarios %}
-            <option value="{{ u.id }}">{{ u.nombre }}</option>
+            <option value="{{ u.id }}" {% if usuario_seleccionado == u.id %}selected{% endif %}>{{ u.nombre }}</option>
             {% endfor %}
         </select>
     </div>
@@ -28,27 +28,44 @@
             <thead>
                 <tr>
                     <th>Local</th>
-                    <th>Visitante</th>
+                    <th>Visita</th>
                     <th>Pronóstico</th>
                 </tr>
             </thead>
             <tbody>
-                {% for event in eventos %}
+                {% for e in eventos %}
                 <tr>
-                    <td>{{ event.homeTeam.name }}</td>
-                    <td>{{ event.awayTeam.name }}</td>
                     <td>
-                        <select class="form-select" name="pronostico_{{ event.id }}">
-                            <option value="local">Local</option>
-                            <option value="empate">Empate</option>
-                            <option value="visitante">Visitante</option>
-                        </select>
+                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.homeTeam.name, 'default') + '.png') }}" alt="{{ e.homeTeam.name }}" width="24" height="24">
+                        {{ e.homeTeam.name }}
+                    </td>
+                    <td>
+                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.awayTeam.name, 'default') + '.png') }}" alt="{{ e.awayTeam.name }}" width="24" height="24">
+                        {{ e.awayTeam.name }}
+                    </td>
+                    <td>
+                        <input type="radio" name="pronostico_{{ e.id }}" value="local"
+                            {% if pronosticos_existentes.get(e.id) == 1 %}checked{% endif %}> Local
+                        <input type="radio" name="pronostico_{{ e.id }}" value="empate"
+                            {% if pronosticos_existentes.get(e.id) == 2 %}checked{% endif %}> Empate
+                        <input type="radio" name="pronostico_{{ e.id }}" value="visitante"
+                            {% if pronosticos_existentes.get(e.id) == 3 %}checked{% endif %}> Visitante
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-    <button type="submit" class="btn btn-success">Guardar Pronósticos</button>
+    <button type="submit" class="btn btn-primary">Guardar Pronósticos</button>
 </form>
+<script>
+function confirmarSobrescritura() {
+  return confirm("⚠️ Ya tienes pronósticos guardados. Si continúas, serán sobrescritos. ¿Deseas continuar?");
+}
+function cambiarUsuario(usuarioId) {
+    const jornada = document.getElementById("jornada").value;
+    window.location.href = "{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}?usuario=" + usuarioId;
+}
+</script>
+
 {% endblock %}

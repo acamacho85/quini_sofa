@@ -22,8 +22,14 @@
                 <td>{{ p.jornada }}</td>
                 <td>{{ p.local }} vs {{ p.visitante }}</td>
                 <td>{{ p.pronostico }}</td>
-                <td>{{ p.resultado }}</td>
-                <td>{% if p.pronostico == p.resultado %}✅{% else %}❌{% endif %}</td>
+                <td>{{ p.resultado if p.resultado else 'Pendiente' }}</td>
+                <td>
+                {% if p.resultado %}
+                    {% if p.pronostico == p.resultado %}✅{% else %}❌{% endif %}
+                {% else %}
+                    ⏳
+                {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
