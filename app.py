@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, flash
 import sqlite3
 from datetime import datetime
-from equipos_dict import EQUIPOS
+from diccionarios import EQUIPOS, PRONOSTICO_MAP, PRONOSTICO_MAP_INV
 
 app = Flask(__name__)
+app.secret_key = "fbf62a22a2b16933f91bbf7f4204e801"
 
 def obtener_jornadas():
     conn = sqlite3.connect("liga_mx.db")
@@ -89,24 +90,15 @@ def captura_pronosticos_jornada(jornada):
         WHERE jornada = ?
         ORDER BY start_timestamp
     """, (jornada,))
-    eventos = [{"id": row[0], "homeTeam": {"name": row[1]}, "awayTeam": {"name": row[2]}} for row in cursor.fetchall()]
+    eventos = [{"id": row[0], "local": row[1], "visitante": row[2]} for row in cursor.fetchall()]
 
-    # ---------------------------
-    # Detectar usuario seleccionado
-    # ---------------------------
+    # Detectar usuario seleccionado (default vacío)
     usuario_id = None
-    if request.method == "POST":
-        usuario_str = request.form.get("usuario", "")
-        if usuario_str.isdigit():
-            usuario_id = int(usuario_str)
-    else:
-        usuario_str = request.args.get("usuario", "")
-        if usuario_str.isdigit():
-            usuario_id = int(usuario_str)
+    usuario_str = request.form.get("usuario") if request.method == "POST" else request.args.get("usuario")
+    if usuario_str and usuario_str.isdigit():
+        usuario_id = int(usuario_str)
 
-    # ---------------------------
     # Cargar pronósticos existentes
-    # ---------------------------
     pronosticos_existentes = {}
     if usuario_id:
         cursor.execute("""
@@ -118,23 +110,49 @@ def captura_pronosticos_jornada(jornada):
         """, (usuario_id, jornada))
         pronosticos_existentes = {row[0]: row[1] for row in cursor.fetchall()}
 
-    # ---------------------------
     # Manejo POST
-    # ---------------------------
     if request.method == "POST":
+        if not usuario_id:
+            flash("⚠️ Debes seleccionar un usuario antes de guardar.", "danger")
+            return redirect(url_for("captura_pronosticos_jornada", jornada=jornada))
+
         jornada_form = int(request.form.get("jornada", jornada))
+        incompletos = False
+        sobrescribir = False
+
         for event in eventos:
             partido_id = event["id"]
             pronostico_str = request.form.get(f"pronostico_{partido_id}")
-            pronostico_map = {"local": 1, "empate": 2, "visitante": 3}
-            pronostico = pronostico_map.get(pronostico_str)
-            if pronostico and usuario_id:
+            pronostico = PRONOSTICO_MAP_INV.get(pronostico_str)
+
+            if pronostico is None:
+                incompletos = True
+            else:
+                # Detectamos si ya existía pronóstico previo
+                if pronosticos_existentes.get(partido_id) is not None:
+                    sobrescribir = True
                 cursor.execute("""
                     INSERT OR REPLACE INTO pronosticos (usuario_id, partido_id, pronostico)
                     VALUES (?, ?, ?)
                 """, (usuario_id, partido_id, pronostico))
+
+        if incompletos:
+            flash("⚠️ Debes capturar pronóstico para todos los partidos.", "warning")
+            conn.rollback()
+            conn.close()
+            return redirect(url_for("captura_pronosticos_jornada", jornada=jornada, usuario=usuario_id))
+
         conn.commit()
+        conn.close()
+
+        # Mensajes condicionales
+        if sobrescribir:
+            flash("⚠️ Algunos de tus pronósticos anteriores fueron sobrescritos.", "warning")
+        else:
+            flash("✅ Pronósticos guardados correctamente.", "success")
+
         return redirect(url_for("captura_pronosticos_jornada", jornada=jornada, usuario=usuario_id))
+
 
     conn.close()
     return render_template(
@@ -144,6 +162,7 @@ def captura_pronosticos_jornada(jornada):
         eventos=eventos,
         pronosticos_existentes=pronosticos_existentes,
         usuario_seleccionado=usuario_id,
+        jornada_activa=jornada,
         team_logo_map=EQUIPOS
     )
 
@@ -152,29 +171,59 @@ def evaluar_pronosticos_jornada(jornada):
     conn = sqlite3.connect("liga_mx.db")
     cursor = conn.cursor()
 
+    # Obtener partidos de la jornada (con ganador incluido)
     cursor.execute("""
-        SELECT u.id, u.nombre, pa.jornada, pa.equipo_local_nombre, pa.equipo_visitante_nombre,
-               p.pronostico, pa.ganador
-        FROM pronosticos p
-        JOIN usuarios u ON p.usuario_id = u.id
-        JOIN partidos pa ON p.partido_id = pa.id
-        WHERE pa.jornada = ?
-        ORDER BY u.nombre, pa.start_timestamp
+        SELECT id, equipo_local_nombre, equipo_visitante_nombre, ganador
+        FROM partidos
+        WHERE jornada = ?
+        ORDER BY start_timestamp
     """, (jornada,))
+    partidos = [
+        {
+            "id": row[0],
+            "local": row[1],
+            "visitante": row[2],
+            "resultado": row[3]  # 1=Local, 2=Visitante, 3=Empate, NULL=No jugado
+        }
+        for row in cursor.fetchall()
+    ]
 
-    pronosticos = []
-    for row in cursor.fetchall():
-        pronosticos.append({
-            "usuario": {"id": row[0], "nombre": row[1]},
-            "jornada": row[2],
-            "local": row[3],
-            "visitante": row[4],
-            "pronostico": row[5],
-            "resultado": row[6]
-        })
+    # Obtener usuarios
+    cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre")
+    usuarios = [{"id": row[0], "nombre": row[1]} for row in cursor.fetchall()]
+
+    # Obtener pronósticos de esta jornada
+    cursor.execute("""
+        SELECT usuario_id, partido_id, pronostico
+        FROM pronosticos
+        WHERE partido_id IN (SELECT id FROM partidos WHERE jornada = ?)
+    """, (jornada,))
+    pronos_raw = cursor.fetchall()
+
+    # Organizar pronósticos por usuario y partido
+    pronosticos = {u['id']: {} for u in usuarios}
+    for usuario_id, partido_id, pron in pronos_raw:
+        pronosticos[usuario_id][partido_id] = pron  # 1=L,2=V,3=E
+
+    # Calcular aciertos directamente con "ganador"
+    aciertos = {u['id']: 0 for u in usuarios}
+    for u in usuarios:
+        for p in partidos:
+            prono = pronosticos.get(u['id'], {}).get(p['id'])
+            if prono and p["resultado"] and prono == p["resultado"]:
+                aciertos[u['id']] += 1
 
     conn.close()
-    return render_template("evaluar_pronosticos.html", pronosticos=pronosticos)
+    return render_template(
+        "evaluar_pronosticos_matriz.html",
+        jornada=jornada,
+        usuarios=usuarios,
+        partidos=partidos,
+        pronosticos=pronosticos,
+        PRONOSTICO_MAP=PRONOSTICO_MAP,
+        team_logo_map=EQUIPOS,
+        aciertos=aciertos
+    )
 
 @app.context_processor
 def inject_jornada_activa():

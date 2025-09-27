@@ -3,10 +3,24 @@
 
 {% block content %}
 <h1>Captura de Pronósticos</h1>
-<form method="POST" action="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}" onsubmit="return confirmarSobrescritura()">
+
+<!-- Mensajes flash -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<form method="POST" action="{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}" onsubmit="return validarFormulario()">
     <div class="mb-3">
         <label for="usuario" class="form-label">Usuario</label>
         <select class="form-select" id="usuario" name="usuario" required onchange="cambiarUsuario(this.value)">
+            <option value="">-- Selecciona un usuario --</option>
             {% for u in usuarios %}
             <option value="{{ u.id }}" {% if usuario_seleccionado == u.id %}selected{% endif %}>{{ u.nombre }}</option>
             {% endfor %}
@@ -15,57 +29,78 @@
 
     <div class="mb-3">
         <label for="jornada" class="form-label">Jornada</label>
-        <select class="form-select" id="jornada" name="jornada" required>
-            {% for round_number in rounds.keys() %}
-            <option value="{{ round_number }}">Jornada {{ round_number }}</option>
-            {% endfor %}
+        <select class="form-select" id="jornada" name="jornada" disabled>
+            <option value="{{ jornada_activa }}">Jornada {{ jornada_activa }}</option>
         </select>
     </div>
 
     <div class="mb-3">
         <label class="form-label">Pronósticos</label>
-        <table class="table table-striped">
+        <table class="table table-striped text-center align-middle">
             <thead>
                 <tr>
                     <th>Local</th>
-                    <th>Visita</th>
-                    <th>Pronóstico</th>
+                    <th>Empate</th>
+                    <th>Visitante</th>
                 </tr>
             </thead>
             <tbody>
                 {% for e in eventos %}
                 <tr>
-                    <td>
-                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.homeTeam.name, 'default') + '.png') }}" alt="{{ e.homeTeam.name }}" width="24" height="24">
-                        {{ e.homeTeam.name }}
+                    <!-- Local -->
+                    <td class="d-flex align-items-center justify-content-center">
+                        <input type="radio" name="pronostico_{{ e.id }}" value="L" 
+                            {% if pronosticos_existentes.get(e.id) == 1 %}checked{% endif %}>
+                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.local, 'default') + '.png') }}" 
+                            alt="{{ e.local }}" width="24" height="24" class="ms-1 me-1">
+                        <span>{{ e.local }}</span>
                     </td>
+
+                    <!-- Empate -->
                     <td>
-                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.awayTeam.name, 'default') + '.png') }}" alt="{{ e.awayTeam.name }}" width="24" height="24">
-                        {{ e.awayTeam.name }}
+                        <input type="radio" name="pronostico_{{ e.id }}" value="E" 
+                            {% if pronosticos_existentes.get(e.id) == 3 %}checked{% endif %}>
+                        <span>Empate</span>
                     </td>
-                    <td>
-                        <input type="radio" name="pronostico_{{ e.id }}" value="local"
-                            {% if pronosticos_existentes.get(e.id) == 1 %}checked{% endif %}> Local
-                        <input type="radio" name="pronostico_{{ e.id }}" value="empate"
-                            {% if pronosticos_existentes.get(e.id) == 2 %}checked{% endif %}> Empate
-                        <input type="radio" name="pronostico_{{ e.id }}" value="visitante"
-                            {% if pronosticos_existentes.get(e.id) == 3 %}checked{% endif %}> Visitante
+
+                    <!-- Visitante -->
+                    <td class="d-flex align-items-center justify-content-center">
+                        <input type="radio" name="pronostico_{{ e.id }}" value="V" 
+                            {% if pronosticos_existentes.get(e.id) == 2 %}checked{% endif %}>
+                        <img src="{{ url_for('static', filename='logos/' + team_logo_map.get(e.visitante, 'default') + '.png') }}" 
+                            alt="{{ e.visitante }}" width="24" height="24" class="ms-1 me-1">
+                        <span>{{ e.visitante }}</span>
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
+
     <button type="submit" class="btn btn-primary">Guardar Pronósticos</button>
 </form>
+
 <script>
-function confirmarSobrescritura() {
-  return confirm("⚠️ Ya tienes pronósticos guardados. Si continúas, serán sobrescritos. ¿Deseas continuar?");
-}
 function cambiarUsuario(usuarioId) {
-    const jornada = document.getElementById("jornada").value;
-    window.location.href = "{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}?usuario=" + usuarioId;
+    if (usuarioId) {
+        window.location.href = "{{ url_for('captura_pronosticos_jornada', jornada=jornada_activa) }}?usuario=" + usuarioId;
+    }
+}
+function validarFormulario() {
+    let usuario = document.getElementById("usuario").value;
+    if (!usuario) {
+        alert("⚠️ Debes seleccionar un usuario antes de guardar.");
+        return false;
+    }
+    let radios = document.querySelectorAll("input[type=radio]");
+    let partidos = {};
+    radios.forEach(r => { if (r.checked) partidos[r.name] = true; });
+    let totalPartidos = {{ eventos|length }};
+    if (Object.keys(partidos).length < totalPartidos) {
+        alert("⚠️ Debes capturar pronóstico para todos los partidos.");
+        return false;
+    }
+    return true;
 }
 </script>
-
 {% endblock %}
